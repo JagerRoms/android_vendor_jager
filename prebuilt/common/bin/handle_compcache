@@ -1,0 +1,23 @@
+#!/system/bin/sh
+#
+# Compcache handler
+# Decides whether or not Compcache is enabled
+#
+
+if [ -e /data/property/persist.service.compcache ];
+then
+  PROP=`getprop persist.service.compcache`
+else
+  PROP=`getprop ro.compcache.default`
+  setprop persist.service.compcache $PROP
+fi
+
+if [ $PROP == 1 ]
+then
+  `dirname $0`/compcache start
+else
+  `dirname $0`/compcache stop
+fi
+
+exit 0
+

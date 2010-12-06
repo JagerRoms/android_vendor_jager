@@ -1,0 +1,182 @@
+#!/bin/bash
+#
+# FixOta_Only
+# Fixes  the ota package for release
+# Changes made by userdelroot (r00t316@gmail.com)  10-07-2010
+# For quick fixes of builds for testing
+# 
+# Copyright (C) 2010 Austen Dicken (cvpcs)
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 2 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+# more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+#
+# NOTE: A lot of this is borrowed from Cyanogen's SQUISHER and OPTICHARGER
+#       scripts, without which I would not have been able to figure out how
+#       to elegently perform these updates
+
+# set our out target host location
+OUT_TARGET_HOST=$(uname -a | grep "Darwin")
+if [ -z "${OUT_TARGET_HOST}" ] ; then
+    OUT_TARGET_HOST="linux-x86"
+    MD5="md5sum"
+else
+    OUT_TARGET_HOST="darwin-x86"
+    MD5="md5"
+fi
+
+# verify that we have an otapackage to update, if one wasn't provided
+OTAPACKAGE="${OUT}/${TARGET_PRODUCT}.${SHELL DATE +%m%d%Y%H%M%S}.zip"
+if [ ! -z "${1}" ] ; then
+    OTAPACKAGE="${1}"
+fi
+if [ ! -f "${OTAPACKAGE}" ]; then
+    echo "${OTAPACKAGE} doesn't exist!";
+    exit 1
+fi
+echo "OTA Package: [${OTAPACKAGE}]"
+
+# determine where we will save the output file
+RELEASEPACKAGE=$(echo ${OTAPACKAGE} | sed -r 's/(\.[^.]+)$/.fixota\1/')
+# make sure we don't overwrite if there was no valid extension to apply
+if [ "${OTAPACKAGE}" == "${RELEASEPACKAGE}" ] ; then
+	RELEASEPACKAGE="${RELEASEPACKAGE}.fixota"
+fi
+echo "Release Package: [${RELEASEPACKAGE}]"
+
+# script to optimize APK files
+OPTIAPK="${ANDROID_BUILD_TOP}/vendor/iager/tools/optiapk"
+
+# list of binaries to remove (unneeded by a ROM)
+DELETE_BINS="applypatch applypatch_static check_prereq recovery updater"
+
+# create our working directory
+WORK="/tmp/$(basename ${OTAPACKAGE}).work"
+rm -fr "${WORK}"
+mkdir -p "${WORK}"
+echo "Created work directory: [${WORK}]"
+
+
+# unpack
+unzip -qq "${OTAPACKAGE}" -d "${WORK}"
+
+# delete all unnecessary binaries from the bin folder
+for bin in ${DELETE_BINS} ; do
+    echo "Removing binary: [${WORK}/system/bin/${bin}]"
+    rm -f "${WORK}/system/bin/${bin}"
+done
+
+# only mess with build.prop if it exists
+if [ -f "${WORK}/system/build.prop" ] ; then
+    # grab the modversion from the build.prop
+    MODVERSION=$(grep "ro.modversion" "${WORK}/system/build.prop" \
+        | sed -e "s/^.*=//g")
+    echo "Found modversion: [${MODVERSION}]"
+
+    # grab the jager build name
+    JAGER_BUILD_NAME=$(grep "ro.jager.build.name" "${WORK}/system/build.prop" \
+        | sed -e "s/^.*=//g")
+    echo "Found jager.build.name: [${JAGER_BUILD_NAME}]"
+
+    # grab the build version
+    JAGER_BUILD_VERSION=$(grep "ro.jager.build.version" "${WORK}/system/build.prop" \
+        | sed -e "s/^.*=//g")
+    echo "Found jager.build.version: [${JAGER_BUILD_VERSION}]"
+
+    # grab build.display.id to fix it
+    JAGER_BUILD_ID=$(grep "ro.build.display.id=" "${WORK}/system/build.prop" \
+        | sed -e "s/^.*=//g")
+    echo "Found ro.build.display.id: ${JAGER_BUILD_ID}"
+
+    JAGER_VER="${JAGER_BUILD_NAME}-${JAGER_BUILD_VERSION}"
+    # modify build prop to our liking
+    echo "Modifying build.prop: [${WORK}/system/build.prop]"
+    grep -v "ro.kernel.android.checkjni" "${WORK}/system/build.prop" \
+        | sed -e "s/^ro\.build\.type=eng$/ro\.build\.type=user/g" \
+        | sed -e "s/^ro\.build\.display\.id=${JAGER_BUILD_ID}/ro\.build\.display\.id=${MODVERSION}/g" \
+        > "${WORK}/system/build.prop.tmp"
+    mv "${WORK}/system/build.prop.tmp" "${WORK}/system/build.prop"
+fi
+
+# just to be extra extra safe, we'll make sure recovery isn't there
+rm -fr "${WORK}/recovery"
+echo "Removed recovery: [${WORK}/recovery]"
+
+# if we have a build name and version, then use that to modify the script
+if [ ! -z "${JAGER_BUILD_NAME}" -a ! -z "${JAGER_BUILD_VERSION}" ] ; then
+    echo "Adding jager build name/version to updater-script..."
+
+    # copy the original script
+    cp "${WORK}/META-INF/com/google/android/updater-script" \
+        "${WORK}/META-INF/com/google/android/updater-script.tmp"
+
+    # ui_print("Installing [BUILD]-[VERSION]! ")
+    echo "ui_print(\"Installing ${JAGER_BUILD_NAME}-${JAGER_BUILD_VERSION}! \");" \
+        > "${WORK}/META-INF/com/google/android/updater-script"
+
+    # ui_print("Rom installation ...")
+#    echo "ui_print(\"Rom installation ...\");" \
+#        >> "${WORK}/META-INF/com/google/android/updater-script"
+
+    # copy the actual install script over
+    cat "${WORK}/META-INF/com/google/android/updater-script.tmp" \
+        >> "${WORK}/META-INF/com/google/android/updater-script"
+
+    # ui_print("Installation complete.")
+    echo "ui_print(\"Installation complete.\");" \
+        >> "${WORK}/META-INF/com/google/android/updater-script"
+
+    # ui_print("Thank you for choosing [BUILD]!")
+    echo "ui_print(\"Thank you for using ${JAGER_BUILD_NAME}!\");" \
+        >> "${WORK}/META-INF/com/google/android/updater-script"
+
+    # remove the temp script
+    rm "${WORK}/META-INF/com/google/android/updater-script.tmp"
+else
+    # if we don't have a build name/ver, then see if we have a modversion and
+    # use that
+    if [ ! -z "${MODVERSION}" ] ; then
+        # place a header at the top of the updater script
+        echo "Adding modversion header to updater-script..."
+        cp "${WORK}/META-INF/com/google/android/updater-script" \
+            "${WORK}/META-INF/com/google/android/updater-script.tmp"
+        echo "ui_print(\"Android Rom ${MODVERSION}!\");" \
+            > "${WORK}/META-INF/com/google/android/updater-script"
+        cat "${WORK}/META-INF/com/google/android/updater-script.tmp" \
+            >> "${WORK}/META-INF/com/google/android/updater-script"
+        rm "${WORK}/META-INF/com/google/android/updater-script.tmp"
+    fi
+fi
+
+# time for zipping!
+olddir="$(pwd)"
+cd "${WORK}"
+zip -9rq update.zip .
+cd "${olddir}"
+
+# time for signing!
+echo "Signing: [${WORK}/update-signed.zip]"
+java -Xmx2048m \
+    -jar "${ANDROID_BUILD_TOP}/out/host/${OUT_TARGET_HOST}/framework/signapk.jar" \
+    -w "${ANDROID_BUILD_TOP}/build/target/product/security/testkey.x509.pem" \
+    "${ANDROID_BUILD_TOP}/build/target/product/security/testkey.pk8" \
+    "${WORK}/update.zip" "${WORK}/update-signed.zip"
+
+# time for release!
+mv "${WORK}/update-signed.zip" "${RELEASEPACKAGE}"
+"${MD5}" "${RELEASEPACKAGE}" \
+    > "${RELEASEPACKAGE}.md5sum"
+MD5SUM=$(cat "${RELEASEPACKAGE}.md5sum" | awk '{print $1}')
+
+echo "Released: [${RELEASEPACKAGE}]"
+echo "MD5: [${MD5SUM}]"
