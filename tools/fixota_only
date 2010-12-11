@@ -36,7 +36,7 @@ else
 fi
 
 # verify that we have an otapackage to update, if one wasn't provided
-OTAPACKAGE="${OUT}/${TARGET_PRODUCT}.${SHELL DATE +%m%d%Y%H%M%S}.zip"
+OTAPACKAGE="${OUT}/${TARGET_PRODUCT}-ota-${TARGET_BUILD_VARIANT}.${LOGNAME}.zip"
 if [ ! -z "${1}" ] ; then
     OTAPACKAGE="${1}"
 fi
